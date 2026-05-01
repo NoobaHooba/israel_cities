@@ -2,8 +2,8 @@ package com.example.israelcities;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 
-import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.widget.Button;
@@ -16,7 +16,6 @@ import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.maps.android.data.Feature;
-import com.google.maps.android.data.Geometry;
 import com.google.maps.android.data.geojson.GeoJsonFeature;
 import com.google.maps.android.data.geojson.GeoJsonLayer;
 import com.google.maps.android.data.geojson.GeoJsonPolygonStyle;
@@ -24,28 +23,63 @@ import com.google.maps.android.data.geojson.GeoJsonPolygonStyle;
 import org.json.JSONException;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
-
-
-import android.os.Bundle;
-
-import androidx.activity.EdgeToEdge;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
+import java.util.Set;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
+    private static final Set<String> YOSH_LOCALITIES = new HashSet<>(Arrays.asList(
+            "אלפי מנשה",
+            "אלקנה",
+            "אפרת",
+            "אריאל",
+            "בית אל",
+            "בית אריה עופרים",
+            "ביתר עילית",
+            "גבע בנימין",
+            "גבעון החדשה",
+            "גבעת זאב",
+            "הר אדר",
+            "כוכב השחר",
+            "כוכב יעקב",
+            "כפר אדומים",
+            "כפר עציון",
+            "מעלה אדומים",
+            "מעלה מכמש",
+            "מעלה שומרון",
+            "מבוא דותן",
+            "נווה דניאל",
+            "נווה צוף",
+            "נוקדים",
+            "נילי",
+            "נעלה",
+            "עלי",
+            "עלי זהב",
+            "עמנואל",
+            "עפרה",
+            "עץ אפרים",
+            "פסגות",
+            "פדואל",
+            "קדומים",
+            "קריית ארבע",
+            "קרני שומרון",
+            "שילה",
+            "שערי תקווה",
+            "תקוע"
+    ));
 
     private GoogleMap mMap;
     private GeoJsonLayer cityLayer;
-    private List<GeoJsonFeature> allFeatures = new ArrayList<>();
+    private final List<GeoJsonFeature> cityFeatures = new ArrayList<>();
+    private final List<GeoJsonFeature> yoshFeatures = new ArrayList<>();
     private GeoJsonFeature currentQuestionFeature;
     private TextView questionText;
     private Button skipButton;
+    private SwitchCompat yoshSwitch;
+    private final Random random = new Random();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,16 +88,20 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         questionText = findViewById(R.id.question_text);
         skipButton = findViewById(R.id.skip_button);
+        yoshSwitch = findViewById(R.id.yosh_switch);
 
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map_fragment);
-        mapFragment.getMapAsync(this);
+        if (mapFragment != null) {
+            mapFragment.getMapAsync(this);
+        }
 
         skipButton.setOnClickListener(v -> {
-            // If user wants to skip the current question, pick a new one
             pickNewRandomCity();
         });
+
+        yoshSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> pickNewRandomCity());
     }
 
     @Override
@@ -85,33 +123,29 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private void loadGeoJsonLayer() {
         try {
-            // 1. Construct the layer from the raw resource
             cityLayer = new GeoJsonLayer(mMap, R.raw.israel_cities, getApplicationContext());
 
-            // 3. Style each polygon
             for (GeoJsonFeature feature : cityLayer.getFeatures()) {
+                if (feature.getGeometry() == null) {
+                    continue;
+                }
+
                 String geomType = feature.getGeometry().getGeometryType();
                 if ("Polygon".equals(geomType) || "MultiPolygon".equals(geomType)) {
-                    GeoJsonPolygonStyle polygonStyle = new GeoJsonPolygonStyle();
-                    // Temporarily use a bold style for debugging
-                    polygonStyle.setFillColor(Color.argb(50, 0, 255, 0));   //  translucent green
-                    polygonStyle.setStrokeColor(Color.MAGENTA);              //  thick magenta outline
-                    polygonStyle.setStrokeWidth(8f);
-                    feature.setPolygonStyle(polygonStyle);
-                    allFeatures.add(feature);
+                    feature.setPolygonStyle(createDefaultPolygonStyle());
+
+                    if (shouldIncludeAsCity(feature)) {
+                        cityFeatures.add(feature);
+                    } else if (isYoshFeature(feature)) {
+                        yoshFeatures.add(feature);
+                    }
                 }
             }
 
-            // 4. Add the layer to the map (after styling)
             cityLayer.addLayerToMap();
 
-            // 5. Set up click logging + handler
-            cityLayer.setOnFeatureClickListener(clickedFeature -> {
-                String engName = clickedFeature.getProperty("MUN_ENG");
-                handleCityClick(clickedFeature);
-            });
+            cityLayer.setOnFeatureClickListener(this::handleCityClick);
 
-            // 6. Start the quiz
             pickNewRandomCity();
 
         } catch (IOException | JSONException e) {
@@ -123,60 +157,50 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     /** Randomly select one city feature as the “question” and update the UI. */
     private void pickNewRandomCity() {
-        if (allFeatures.isEmpty()) return;
+        List<GeoJsonFeature> availableFeatures = getQuestionPool();
+        if (availableFeatures.isEmpty()) {
+            questionText.setText(getString(R.string.no_cities_available));
+            return;
+        }
 
-        // Reset any previous polygon style (in case we highlighted it)
         if (currentQuestionFeature != null) {
             resetFeatureStyle(currentQuestionFeature);
         }
 
-        // Pick a random feature
-        Random rand = new Random();
-        int index = rand.nextInt(allFeatures.size());
-        currentQuestionFeature = allFeatures.get(index);
-
-        // The city name should be stored as a property, e.g., "name" or "NAME"
-        // Adjust this key based on your GeoJSON’s property name.
-        String cityName = currentQuestionFeature.getProperty("name");
-        if (cityName == null) {
-            cityName = currentQuestionFeature.getProperty("NAME_1"); // fallback if property differs
-        }
-        questionText.setText("Tap on: " + cityName);
+        currentQuestionFeature = availableFeatures.get(random.nextInt(availableFeatures.size()));
+        String cityName = resolveFeatureName(currentQuestionFeature);
+        questionText.setText(getString(R.string.tap_on_city, cityName));
     }
 
     /** Called when the user taps on any polygon feature. */
     private void handleCityClick(Feature clickedFeature) {
-        if (!(clickedFeature instanceof GeoJsonFeature)) return;
-        GeoJsonFeature tapped = (GeoJsonFeature) clickedFeature;
+        if (!(clickedFeature instanceof GeoJsonFeature) || currentQuestionFeature == null) {
+            return;
+        }
 
-        String tappedName = tapped.getProperty("name");
-        if (tappedName == null) {
-            tappedName = tapped.getProperty("NAME_1");
+        GeoJsonFeature tapped = (GeoJsonFeature) clickedFeature;
+        if (!getQuestionPool().contains(tapped)) {
+            return;
         }
-        String targetName = currentQuestionFeature.getProperty("name");
-        if (targetName == null) {
-            targetName = currentQuestionFeature.getProperty("NAME_1");
-        }
+
+        String tappedName = resolveFeatureName(tapped);
+        String targetName = resolveFeatureName(currentQuestionFeature);
 
         if (tappedName != null && tappedName.equals(targetName)) {
-            // Correct answer
-            highlightFeature(tapped, Color.argb(100, 0, 255, 0)); // translucent green
-            Toast.makeText(this, "Correct! That is " + tappedName, Toast.LENGTH_SHORT).show();
-            // Wait a moment, then pick the next one
+            highlightFeature(tapped, Color.argb(110, 76, 175, 80));
+            Toast.makeText(this, getString(R.string.correct_answer, tappedName), Toast.LENGTH_SHORT).show();
             tapped.getPolygonStyle().setStrokeColor(Color.GREEN);
             tapped.getPolygonStyle().setStrokeWidth(5);
-            mMap.clear(); // remove all polygons
-            cityLayer.addLayerToMap(); // re-add layer so highlight shows
+            mMap.clear();
+            cityLayer.addLayerToMap();
             pickNewRandomCity();
         } else {
-            // Incorrect answer
-            highlightFeature(tapped, Color.argb(100, 255, 0, 0)); // translucent red
-            Toast.makeText(this, "Nope! That’s " + tappedName, Toast.LENGTH_SHORT).show();
+            highlightFeature(tapped, Color.argb(110, 211, 47, 47));
+            Toast.makeText(this, getString(R.string.wrong_answer, tappedName), Toast.LENGTH_SHORT).show();
             tapped.getPolygonStyle().setStrokeColor(Color.RED);
             tapped.getPolygonStyle().setStrokeWidth(5);
             mMap.clear();
             cityLayer.addLayerToMap();
-            // Keep same question; user can try again or skip
         }
     }
 
@@ -191,10 +215,55 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     /** Resets a feature back to default style (transparent fill, thin gray stroke). */
     private void resetFeatureStyle(GeoJsonFeature feature) {
+        feature.setPolygonStyle(createDefaultPolygonStyle());
+    }
+
+    private GeoJsonPolygonStyle createDefaultPolygonStyle() {
         GeoJsonPolygonStyle style = new GeoJsonPolygonStyle();
-        style.setFillColor(Color.argb(0, 0, 0, 0)); // transparent
+        style.setFillColor(Color.argb(40, 33, 150, 243));
         style.setStrokeColor(Color.DKGRAY);
-        style.setStrokeWidth(2);
-        feature.setPolygonStyle(style);
+        style.setStrokeWidth(2.5f);
+        return style;
+    }
+
+    private List<GeoJsonFeature> getQuestionPool() {
+        List<GeoJsonFeature> questionPool = new ArrayList<>(cityFeatures);
+        if (yoshSwitch != null && yoshSwitch.isChecked()) {
+            questionPool.addAll(yoshFeatures);
+        }
+        return questionPool;
+    }
+
+    private boolean shouldIncludeAsCity(GeoJsonFeature feature) {
+        String type = feature.getProperty("type");
+        if ("residential".equalsIgnoreCase(type)) {
+            return !isYoshFeature(feature);
+        }
+
+        return feature.hasProperty("MUN_ENG") || feature.hasProperty("MUN_HEB");
+    }
+
+    private boolean isYoshFeature(GeoJsonFeature feature) {
+        String type = feature.getProperty("type");
+        if (!"residential".equalsIgnoreCase(type)) {
+            return false;
+        }
+
+        String name = resolveFeatureName(feature);
+        return name != null && YOSH_LOCALITIES.contains(name);
+    }
+
+    private String resolveFeatureName(GeoJsonFeature feature) {
+        String cityName = feature.getProperty("MUN_ENG");
+        if (cityName == null || cityName.trim().isEmpty()) {
+            cityName = feature.getProperty("name");
+        }
+        if (cityName == null || cityName.trim().isEmpty()) {
+            cityName = feature.getProperty("NAME_1");
+        }
+        if (cityName == null || cityName.trim().isEmpty()) {
+            cityName = feature.getProperty("MUN_HEB");
+        }
+        return cityName == null ? getString(R.string.unknown_city) : cityName;
     }
 }

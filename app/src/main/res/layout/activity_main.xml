@@ -17,23 +17,32 @@
         android:id="@+id/quiz_panel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#CCFFFFFF"
         android:orientation="vertical"
-        android:background="@android:color/transparent"
-        android:padding="16dp"
-        android:layout_gravity="top">
+        android:padding="16dp">
 
         <TextView
             android:id="@+id/question_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Which city is this?"
+            android:text="@string/question_placeholder"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp"
             android:textSize="18sp"
             android:textColor="@android:color/black" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/yosh_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="@string/include_yehuda_and_shomron" />
 
         <Button
             android:id="@+id/skip_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Skip" />
+            android:text="@string/skip" />
     </LinearLayout>
 </FrameLayout>

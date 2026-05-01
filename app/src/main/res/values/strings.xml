@@ -1,4 +1,12 @@
 <resources>
     <string name="app_name">Israel Cities</string>
     <string name="google_maps_key">AIzaSyCuW892SMXL4UoAgb1mcsTMHICiJ1KO6TE</string>
+    <string name="question_placeholder">Which city is this?</string>
+    <string name="include_yehuda_and_shomron">Include Yehuda and Shomron</string>
+    <string name="skip">Skip</string>
+    <string name="tap_on_city">Tap on: %1$s</string>
+    <string name="correct_answer">Correct! That is %1$s</string>
+    <string name="wrong_answer">Nope! That’s %1$s</string>
+    <string name="unknown_city">Unknown city</string>
+    <string name="no_cities_available">No quiz locations available.</string>
 </resources>
