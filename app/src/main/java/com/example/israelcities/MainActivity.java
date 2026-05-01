@@ -21,14 +21,20 @@ import com.google.maps.android.data.geojson.GeoJsonLayer;
 import com.google.maps.android.data.geojson.GeoJsonPolygonStyle;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
     private static final Set<String> YOSH_LOCALITIES = new HashSet<>(Arrays.asList(
@@ -80,6 +86,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Button skipButton;
     private SwitchCompat yoshSwitch;
     private final Random random = new Random();
+    private final ExecutorService mapLoaderExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,6 +96,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         questionText = findViewById(R.id.question_text);
         skipButton = findViewById(R.id.skip_button);
         yoshSwitch = findViewById(R.id.yosh_switch);
+        setControlsEnabled(false);
+        questionText.setText(R.string.loading_locations);
 
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
@@ -113,47 +122,75 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(israelCenter, 6.7f));
 
         // Load the GeoJSON containing Israeli city boundaries, style, and set up click listeners
-        try {
-            loadGeoJsonLayer();
-        } catch (Exception e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Failed to load map data.", Toast.LENGTH_LONG).show();
-        }
+        loadGeoJsonLayerAsync();
     }
 
-    private void loadGeoJsonLayer() {
-        try {
-            cityLayer = new GeoJsonLayer(mMap, R.raw.israel_cities, getApplicationContext());
-
-            for (GeoJsonFeature feature : cityLayer.getFeatures()) {
-                if (feature.getGeometry() == null) {
-                    continue;
-                }
-
-                String geomType = feature.getGeometry().getGeometryType();
-                if ("Polygon".equals(geomType) || "MultiPolygon".equals(geomType)) {
-                    feature.setPolygonStyle(createDefaultPolygonStyle());
-
-                    if (shouldIncludeAsCity(feature)) {
-                        cityFeatures.add(feature);
-                    } else if (isYoshFeature(feature)) {
-                        yoshFeatures.add(feature);
+    private void loadGeoJsonLayerAsync() {
+        mapLoaderExecutor.execute(() -> {
+            try {
+                JSONObject geoJsonObject = loadGeoJsonObject();
+                runOnUiThread(() -> {
+                    try {
+                        initializeGeoJsonLayer(geoJsonObject);
+                    } catch (JSONException e) {
+                        showMapLoadError(e);
                     }
-                }
+                });
+            } catch (IOException | JSONException e) {
+                runOnUiThread(() -> showMapLoadError(e));
+            }
+        });
+    }
+
+    private void initializeGeoJsonLayer(JSONObject geoJsonObject) throws JSONException {
+        cityFeatures.clear();
+        yoshFeatures.clear();
+
+        cityLayer = new GeoJsonLayer(mMap, geoJsonObject);
+
+        for (GeoJsonFeature feature : cityLayer.getFeatures()) {
+            if (feature.getGeometry() == null) {
+                continue;
             }
 
-            cityLayer.addLayerToMap();
+            String geomType = feature.getGeometry().getGeometryType();
+            if ("Polygon".equals(geomType) || "MultiPolygon".equals(geomType)) {
+                feature.setPolygonStyle(createDefaultPolygonStyle());
 
-            cityLayer.setOnFeatureClickListener(this::handleCityClick);
+                if (shouldIncludeAsCity(feature)) {
+                    cityFeatures.add(feature);
+                } else if (isYoshFeature(feature)) {
+                    yoshFeatures.add(feature);
+                }
+            }
+        }
 
-            pickNewRandomCity();
+        cityLayer.addLayerToMap();
+        cityLayer.setOnFeatureClickListener(this::handleCityClick);
 
-        } catch (IOException | JSONException e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Failed to load GeoJSON.", Toast.LENGTH_LONG).show();
+        setControlsEnabled(true);
+        pickNewRandomCity();
+    }
+
+    private JSONObject loadGeoJsonObject() throws IOException, JSONException {
+        try (InputStream inputStream = getResources().openRawResource(R.raw.israel_cities);
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            String json = outputStream.toString(StandardCharsets.UTF_8.name());
+            return new JSONObject(json);
         }
     }
 
+    private void showMapLoadError(Exception e) {
+        e.printStackTrace();
+        setControlsEnabled(false);
+        questionText.setText(R.string.failed_to_load_locations);
+        Toast.makeText(this, R.string.failed_to_load_geojson, Toast.LENGTH_LONG).show();
+    }
 
     /** Randomly select one city feature as the “question” and update the UI. */
     private void pickNewRandomCity() {
@@ -191,16 +228,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             Toast.makeText(this, getString(R.string.correct_answer, tappedName), Toast.LENGTH_SHORT).show();
             tapped.getPolygonStyle().setStrokeColor(Color.GREEN);
             tapped.getPolygonStyle().setStrokeWidth(5);
-            mMap.clear();
-            cityLayer.addLayerToMap();
             pickNewRandomCity();
         } else {
             highlightFeature(tapped, Color.argb(110, 211, 47, 47));
             Toast.makeText(this, getString(R.string.wrong_answer, tappedName), Toast.LENGTH_SHORT).show();
             tapped.getPolygonStyle().setStrokeColor(Color.RED);
             tapped.getPolygonStyle().setStrokeWidth(5);
-            mMap.clear();
-            cityLayer.addLayerToMap();
         }
     }
 
@@ -208,9 +241,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private void highlightFeature(GeoJsonFeature feature, int fillColor) {
         GeoJsonPolygonStyle style = feature.getPolygonStyle();
         style.setFillColor(fillColor);
-        // Re-render layer by clearing and re-adding
-        mMap.clear();
-        cityLayer.addLayerToMap();
     }
 
     /** Resets a feature back to default style (transparent fill, thin gray stroke). */
@@ -265,5 +295,16 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             cityName = feature.getProperty("MUN_HEB");
         }
         return cityName == null ? getString(R.string.unknown_city) : cityName;
+    }
+
+    private void setControlsEnabled(boolean enabled) {
+        skipButton.setEnabled(enabled);
+        yoshSwitch.setEnabled(enabled);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        mapLoaderExecutor.shutdownNow();
     }
 }

@@ -9,4 +9,7 @@
     <string name="wrong_answer">Nope! That’s %1$s</string>
     <string name="unknown_city">Unknown city</string>
     <string name="no_cities_available">No quiz locations available.</string>
+    <string name="loading_locations">Loading locations...</string>
+    <string name="failed_to_load_locations">Failed to load locations.</string>
+    <string name="failed_to_load_geojson">Failed to load GeoJSON.</string>
 </resources>
